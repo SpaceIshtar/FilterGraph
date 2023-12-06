@@ -13,21 +13,30 @@ void graph_profile(std::string& index_prefix, Distance<T>* dist_fn){
     float avg_degree = 0;
     size_t min_degree = graph_degree;
     size_t max_degree = 0;
-    for (size_t i=0;i<nd;i++){
-        uint32_t* neighbor = (uint32_t*)(index->_storage+i*point_size+graph_offset);
-        size_t cur_degree = 0;
-        for (uint32_t j=0;j<graph_degree;j++){
-            if (neighbor[j]<nd){
-                cur_degree++;
-            }
+    for (size_t i=0;i<1010;i++){
+        for (int j=0;j<index->_graph_row_index[i].size();j++){
+            auto p = index->_graph_row_index[i][j];
+            std::cout<<"("<<p.first<<", "<<p.second<<"); ";
         }
-        avg_degree+=cur_degree;
-        if (cur_degree<min_degree) min_degree = cur_degree;
-        if (cur_degree>max_degree) max_degree = cur_degree;
-        std::cout<<"point "<<i<<", degree: "<<cur_degree<<std::endl;
+        std::cout<<std::endl;
+    //     uint32_t* neighbor = (uint32_t*)(index->_storage+i*point_size+graph_offset);
+    //     size_t cur_degree = 0;
+    //     std::cout<<"neighbors: ";
+    //     for (uint32_t j=0;j<graph_degree;j++){
+            
+    //         if (neighbor[j]<nd){
+    //             cur_degree++;
+    //             std::cout<<neighbor[j]<<" ";
+    //         }
+    //     }
+    //     std::cout<<std::endl;
+    //     avg_degree+=cur_degree;
+    //     if (cur_degree<min_degree) min_degree = cur_degree;
+    //     if (cur_degree>max_degree) max_degree = cur_degree;
+    //     std::cout<<"point "<<i<<", degree: "<<cur_degree<<std::endl;
     }
-    avg_degree = avg_degree/(float)nd;
-    std::cout<<"max degree: "<<max_degree<<", min degree: "<<min_degree<<", avg_degree: "<<avg_degree<<std::endl;
+    // avg_degree = avg_degree/(float)nd;
+    // std::cout<<"max degree: "<<max_degree<<", min degree: "<<min_degree<<", avg_degree: "<<avg_degree<<std::endl;
 }
 
 int main(int argc, char** argv){

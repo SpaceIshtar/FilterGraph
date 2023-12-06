@@ -21,20 +21,22 @@ float calculate_recall(uint32_t nq, uint32_t topk, uint32_t* result, uint32_t* g
 template<typename T>
 void search_queryfile(std::string& query_path, std::string& query_label_file, std::string& index_prefix, std::string& gt_file, 
                         Distance<T>* dist_fn, uint32_t topk, uint32_t ef_search){
-    uint32_t nq, dim, topk2;
+    uint32_t nq = 0, dim = 0, topk2 = 0;
     T* query = nullptr;
     read_bin<T>(query_path.c_str(),nq,dim,query);
     uint32_t* gt_ids = nullptr;
     float* gt_dis = nullptr;
     read_gt(gt_file.c_str(),nq,topk2,gt_ids,gt_dis);
-    int64_t rows,cols,nnz;
+    int64_t rows = 0,cols = 0,nnz = 0;
     int64_t* row_index = nullptr;
     int32_t* col_index = nullptr;
     float* value = nullptr;
-    read_sparse_matrix(query_label_file.c_str(),rows,cols,nnz,row_index,col_index,value);
+    if (query_label_file.size()>1){
+        read_sparse_matrix(query_label_file.c_str(),rows,cols,nnz,row_index,col_index,value);
+    }
     std::vector<std::vector<uint32_t>> query_to_labels(nq,std::vector<uint32_t>());
     #pragma omp parallel for 
-    for (uint32_t i=0;i<nq;i++){
+    for (uint32_t i=0;i<rows;i++){
         for (uint32_t j=row_index[i];j<row_index[i+1];j++){
             query_to_labels[i].push_back(col_index[j]);
         }

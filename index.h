@@ -72,17 +72,22 @@ class FilterIndex{
             // cardinality estimation
             uint32_t cardinality = _nd;
             uint32_t smallest_cardinality = _nd;
+            if (labels.empty()){
+                labels.emplace_back(std::numeric_limits<uint32_t>::max());
+            }
             uint32_t smallest_filter = labels[0];
             std::sort(labels.begin(),labels.end());
             uint32_t computation_count = 0;
             {
                 std::vector<float> label_size;
                 for (uint32_t label:labels){
+                    _global_mtx.lock();
                     label_size.push_back(_label_to_pts[label].size());
                     if (_label_to_pts[label].size()<smallest_cardinality){
                         smallest_cardinality = _label_to_pts[label].size();
                         smallest_filter = label;
                     }
+                    _global_mtx.unlock();
                 }
                 std::sort(label_size.begin(),label_size.end());
                 for (uint32_t i=0;i<label_size.size();i++){
@@ -99,7 +104,10 @@ class FilterIndex{
             if (cardinality < 1000 || smallest_cardinality < 1000){
                 // go through smallest filter
                 std::vector<uint32_t> candidates;
-                for (uint32_t point_id:_label_to_pts[smallest_filter]){
+                _global_mtx.lock();
+                std::vector<uint32_t> all_candidates(_label_to_pts[smallest_filter]);
+                _global_mtx.unlock();
+                for (uint32_t point_id:all_candidates){
                     if (match_all_filters(point_id,labels)){
                         candidates.push_back(point_id);
                     }
@@ -119,25 +127,32 @@ class FilterIndex{
             // if search graph
             else{
                 std::priority_queue<std::pair<float,uint32_t>> ef_queue;
+                std::priority_queue<std::pair<float,uint32_t>> top_candidates;
                 std::vector<uint32_t> visit_set;
-                for (uint32_t entry_id:_label_to_medoid_id[smallest_filter]){
+                _global_mtx.lock();
+                std::vector<uint32_t> start_points(_label_to_medoid_id[smallest_filter]);
+                _global_mtx.unlock();
+                for (uint32_t entry_id:start_points){
                     float dis = _dist_fn->compare((T*)(_storage+entry_id*_point_size),query,_dim);
                     computation_count++;
                     ef_queue.emplace(-dis,entry_id);
+                    top_candidates.emplace(dis,entry_id);
+                    visit_set.push_back(entry_id);
                     if (match_all_filters(entry_id,labels)){
                         pq.emplace(dis,entry_id);
                     }
                 }
                 float lower_bound = std::numeric_limits<float>::max();
-                if (!pq.empty()) lower_bound = pq.top().first;
+                if (!top_candidates.empty()) lower_bound = top_candidates.top().first;
                 std::vector<uint32_t> candidates;
                 while (!ef_queue.empty()){
                     std::pair<float,uint32_t> cur = ef_queue.top();
                     float dis = -cur.first;
                     uint32_t id = cur.second;
-                    if (dis>lower_bound && pq.size()>=ef_search){
+                    if (dis>lower_bound && top_candidates.size()>=ef_search){
                         break;
                     }
+                    // std::cout<<"Search centroid: "<<id<<std::endl;
                     ef_queue.pop();
                     uint32_t start_index = 0, end_index = 0;
                     for (uint32_t i=0;i<_graph_row_index[id].size();i++){
@@ -145,8 +160,11 @@ class FilterIndex{
                         if (row_index.first == smallest_filter){
                             start_index = row_index.second;
                             end_index = _graph_row_index[id][i+1].second;
+                            break;
                         }
                     }
+                    uint32_t candidate_num = end_index - start_index;
+                    // std::cout<<start_index<<", "<<end_index<<std::endl;
                     uint32_t* start_pointer = (uint32_t*)(_storage+id*_point_size+_graph_offset);
                     uint32_t* end_pointer = start_pointer+end_index;
                     start_pointer+=start_index;
@@ -165,16 +183,17 @@ class FilterIndex{
                         }
                         float candidate_dis = _dist_fn->compare((T*)(_storage+candidates[i]*_point_size),query,_dim);
                         computation_count++;
-                        if (pq.size()<ef_search||lower_bound>candidate_dis){
+                        if (top_candidates.size()<ef_search||lower_bound>candidate_dis){
                             ef_queue.emplace(-candidate_dis,candidates[i]);
+                            top_candidates.emplace(candidate_dis,candidates[i]);
                             if (match_all_filters(candidates[i],labels)){
                                 pq.emplace(candidate_dis,candidates[i]);
-                                if (pq.size()>ef_search){
-                                    pq.pop();
+                            }
+                            if (top_candidates.size()>ef_search){
+                                    top_candidates.pop();
                                 }
-                                if (!pq.empty()){
-                                    lower_bound=pq.top().first;
-                                }
+                                if (!top_candidates.empty()){
+                                    lower_bound=top_candidates.top().first;
                             }
                         }
                     }
@@ -187,25 +206,35 @@ class FilterIndex{
                 pq.pop();
             }
 
-            uint32_t position = 0;
+            uint32_t position = pq.size();
             while (!pq.empty()){
+                position--;
                 std::pair<float,uint32_t> p = pq.top();
                 pq.pop();
                 ids_res[position] = p.second;
                 dis_res[position] = p.first;
-                position++;
             }
             return computation_count;
         }
 
         void addPoint(T* data, size_t id, std::vector<uint32_t>& labels, uint32_t Lsize = 100, uint32_t ef_construction=100){
+            if (labels.empty()){
+                labels.emplace_back(std::numeric_limits<uint32_t>::max());
+            }
+
             {
+                uint32_t lock_id = getLockIndex(id);
+                _label_lock[lock_id].lock();
                 memcpy(_storage+id*_point_size,data,_graph_offset);
                 memset(_storage+id*_point_size+_graph_offset,std::numeric_limits<uint32_t>::max(),_graph_degree*sizeof(uint32_t));
+                _label_lock[lock_id].unlock();
+                _global_mtx.lock();
                 _pts_to_labels[id] = labels;
+                _global_mtx.unlock();
                 std::sort(_pts_to_labels[id].begin(),_pts_to_labels[id].end());
             }
 
+            _global_mtx.lock();
             for (uint32_t label:labels){
                 _label_hierarchy_level[label] = std::max(1,(int)std::log2(_label_to_pts[label].size()));
             }
@@ -223,6 +252,7 @@ class FilterIndex{
                 }
                 _graph_row_index[id].push_back(std::pair<uint32_t,uint32_t>(-1,_graph_degree));
             }
+            _global_mtx.unlock();
 
             for (uint32_t ii=1;ii<_graph_row_index[id].size();ii++){
                 uint32_t label = _graph_row_index[id][ii-1].first;
@@ -257,8 +287,11 @@ class FilterIndex{
                 }
                 
                 // set neighbors
+                uint32_t lock_id = getLockIndex(id);
+                _label_lock[lock_id].lock();
                 uint32_t start_index = _graph_row_index[id][ii-1].second;
                 memcpy(_storage+id*_point_size+_graph_offset+start_index*sizeof(uint32_t),neighbors.data(),neighbors.size()*sizeof(uint32_t));
+                _label_lock[lock_id].unlock();
 
                 // insert id into neighbors' neighbor list
                 for (uint32_t neigh:neighbors){
@@ -272,39 +305,49 @@ class FilterIndex{
                             break;
                         }
                     }
-                    {
+                    {   
+                        uint32_t neighbor_lock_id = getLockIndex(neigh);
+                        _label_lock[neighbor_lock_id].lock();
                         uint32_t* start_pointer = (uint32_t*)(_storage+neigh*_point_size+_graph_offset);
                         uint32_t* end_pointer = start_pointer+index_2;
                         start_pointer+=index_1;
-                        bool insert = true;
-                        float dis1 = neighbor_to_dis[neigh];
-                        for (uint32_t* pointer = start_pointer; pointer<end_pointer;++pointer){
-                            uint32_t neighbor_id = *pointer;
+                        uint32_t allocate_degree = index_2 - index_1;
+                        std::priority_queue<std::pair<float, uint32_t>> neighbor_pq;
+                        neighbor_pq.emplace(std::pair<float,uint32_t>(-neighbor_to_dis[neigh],id));
+                        for (uint32_t *neighbor_pointer = start_pointer; neighbor_pointer < end_pointer; ++neighbor_pointer){
+                            uint32_t neighbor_id = *neighbor_pointer;
                             if (neighbor_id>_nd) break;
-                            float dis2 = _dist_fn->compare((T*)(_storage+neighbor_id*_point_size),data,_dim);
-                            if (dis2<dis1){
-                                insert = false;
-                                break;
-                            }
+                            float distance_neigh_nn = _dist_fn->compare((T*)(_storage+neigh*_point_size),(T*)(_storage+neighbor_id*_point_size),_dim);
+                            neighbor_pq.emplace(std::pair<float,uint32_t>(-distance_neigh_nn,neighbor_id));
                         }
-                        if (insert){
-                            bool full = (*(end_pointer-1)<_nd);
-                            if (full){
-                                *(end_pointer-1)=id;
-                            }
-                            else{
-                                uint32_t* pointer = start_pointer;
-                                for (;pointer<end_pointer;++pointer){
-                                    uint32_t neighbor_id = *pointer;
-                                    if (neighbor_id >= _nd) break;
+                        std::vector<uint32_t> prune_result;
+                        prune_result.reserve(allocate_degree);
+                        while (!neighbor_pq.empty()){
+                            auto neighbor_pair = neighbor_pq.top();
+                            neighbor_pq.pop();
+                            float dis1 = -neighbor_pair.first;
+                            uint32_t neighbor_id = neighbor_pair.second;
+                            bool prune = false;
+                            for (uint32_t second_pair: prune_result){
+                                float dis2 = _dist_fn->compare((T*)(_storage+second_pair*_point_size),(T*)(_storage+neighbor_id*_point_size),_dim);
+                                if (dis2 < dis1){
+                                    prune = true;
+                                    break;
                                 }
-                                *pointer = id;
+                            }
+                            if (!prune){
+                                prune_result.emplace_back(neighbor_id);
+                                if (prune_result.size()>=allocate_degree) break;
                             }
                         }
+                        memset(start_pointer,std::numeric_limits<uint32_t>::max(),sizeof(uint32_t)*allocate_degree);
+                        memcpy(start_pointer,prune_result.data(),sizeof(uint32_t)*prune_result.size());
+                        _label_lock[neighbor_lock_id].unlock();
                     }
                 }
             }
 
+            _global_mtx.lock();
             for (uint32_t label:labels){
                 if (_label_to_pts.find(label)==_label_to_pts.end()){
                     _label_to_pts[label] = std::vector<uint32_t>(1,id);
@@ -324,6 +367,7 @@ class FilterIndex{
                     }
                 }
             }
+            _global_mtx.unlock();
             
         }        
 
