@@ -1,9 +1,4 @@
-// #include "index.h"
-// #include "index_v1.h"
-// #include "index_v2.h"
-#include "index_sharing.h"
-// #include "index_sharing_v2.h"
-// #include "index_final.h"
+#include "index_v3.h"
 #include <chrono>
 
 float calculate_recall(uint32_t nq, uint32_t topk, uint32_t* result, uint32_t* gt_ids, uint32_t gt_dim){
@@ -25,7 +20,6 @@ float calculate_recall(uint32_t nq, uint32_t topk, uint32_t* result, uint32_t* g
     return (float)count/(float)(nq*topk);
 }
 
-
 template<typename T>
 void search_queryfile(std::string& query_path, std::string& query_label_file, std::string& index_prefix, std::string& gt_file, 
                         Distance<T>* dist_fn, uint32_t topk, uint32_t ef_search){
@@ -42,7 +36,7 @@ void search_queryfile(std::string& query_path, std::string& query_label_file, st
     if (query_label_file.size()>1){
         read_sparse_matrix(query_label_file.c_str(),rows,cols,nnz,row_index,col_index,value);
     }
-    std::vector<std::vector<uint32_t>> query_to_labels(nq,std::vector<uint32_t>());
+    std::vector<std::vector<uint32_t>> query_to_labels(rows,std::vector<uint32_t>());
     #pragma omp parallel for 
     for (uint32_t i=0;i<rows;i++){
         for (uint32_t j=row_index[i];j<row_index[i+1];j++){
@@ -50,20 +44,22 @@ void search_queryfile(std::string& query_path, std::string& query_label_file, st
         }
     }
     std::cout<<"Read Data Ends."<<std::endl;
-    FilterIndex<T>* index = new FilterIndex<T>(dist_fn);
-    index->load(index_prefix);
+    FilterIndex_v3<T>* index = new FilterIndex_v3<T>(dist_fn,index_prefix);
+
     std::cout<<"Load Index Ends."<<std::endl;
     uint32_t* result = new uint32_t[nq*topk];
     float* distance_res = new float[nq*topk];
     auto start = std::chrono::high_resolution_clock::now();
     uint32_t computation_count = 0;
     std::mutex count_lock;
+    std::vector<uint32_t> query_dis_computation(nq,0);
     // #pragma omp parallel for
     for (uint32_t i=0;i<nq;i++){
-        uint32_t cur_count = index->search(query+i*dim,query_to_labels[i],topk,result+i*topk,distance_res+i*topk,ef_search);
+        uint32_t cur_count = index->search_predicate(query+i*dim,query_to_labels[i],topk,ef_search,result+i*topk,distance_res+i*topk,false);
         count_lock.lock();
         computation_count+=cur_count;
         count_lock.unlock();
+        query_dis_computation[i] = cur_count;
     }
     auto end = std::chrono::high_resolution_clock::now();
     std::cout<<"Search Ends."<<std::endl;
@@ -72,7 +68,6 @@ void search_queryfile(std::string& query_path, std::string& query_label_file, st
     float recall = calculate_recall(nq,topk,result,gt_ids,topk2);
     double avg_distance_comp = (double)computation_count/(double)nq;
     std::cout<<"QPS: "<<qps<<", recall: "<<recall<<", computation: "<<avg_distance_comp<<std::endl;
-    // print_statistics<T>(index, nq, topk, query_to_labels, result, gt_ids, topk2);
 }
 
 int main(int argc, char** argv){

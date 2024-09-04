@@ -6,7 +6,8 @@
 #include <tuple>
 #include <vector>
 #include <algorithm>
-
+#ifndef IO_H
+#define IO_H
 typedef std::unordered_set<std::string> label_set;
 typedef std::string path;
 
@@ -21,8 +22,10 @@ void read_bin(const char* filename, uint32_t& nd, uint32_t& dim, T* &data){
     if (data!=nullptr){
         delete[] data;
     }
-    data = new T[nd*dim];
-    reader.read((char*)data,sizeof(T)*nd*dim);
+    std::cout<<nd<<", "<<dim<<std::endl;
+    size_t data_size = (size_t)nd*(size_t)dim;
+    data = new T[data_size];
+    reader.read((char*)data,sizeof(T)*data_size);
     reader.close();
 }
 
@@ -104,7 +107,7 @@ void read_sparse_matrix(const char* filename,int64_t& rows, int64_t& cols, int64
     reader.read((char*)&rows,sizeof(int64_t));
     reader.read((char*)&cols,sizeof(int64_t));
     reader.read((char*)&nnz,sizeof(int64_t));
-    //std::cout<<"Matrix size: ("<<rows<<", "<<cols<<"), non-zeros elements: "<<nnz<<std::endl;
+    std::cout<<"Matrix size: ("<<rows<<", "<<cols<<"), non-zeros elements: "<<nnz<<std::endl;
     if (row_index!=nullptr){
         delete[] row_index;
     }
@@ -135,7 +138,7 @@ void write_sparse_matrix(const char* filename, int64_t rows, int64_t cols, int64
 }
 
 template<typename T>
-void write_bin(char* filename,uint32_t nd, uint32_t dim, T* data){
+void write_bin(const char* filename,uint32_t nd, uint32_t dim, T* data){
     std::ofstream writer(filename,std::ios::out);
     writer.write((char*)&nd,sizeof(uint32_t));
     writer.write((char*)&dim,sizeof(uint32_t));
@@ -186,3 +189,5 @@ void read_ivecs_gt(const char* filename, uint32_t& num, uint32_t& dim, uint32_t*
     }
     in.close();
 }
+
+#endif
