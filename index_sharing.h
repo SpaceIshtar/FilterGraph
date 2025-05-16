@@ -111,9 +111,9 @@ class FilterIndex{
             // query plan selection: whether search graph, traverse which filter
             // if brute-force
             std::priority_queue<std::pair<float,uint32_t>> pq;
-            // bool use_graph = (cardinality >= 1000 || smallest_cardinality >= 4096) && smallest_graph_search;
-            // if (!use_graph){
-            if (cardinality < 1000 || smallest_cardinality < 1000 || !smallest_graph_search){
+            bool use_graph = (cardinality >= 1000 || smallest_cardinality >= 4096) && smallest_graph_search;
+            if (!use_graph){
+            // if (cardinality < 1000 || smallest_cardinality < 1000 || !smallest_graph_search){
                 // go through smallest filter
                 std::vector<uint32_t> candidates;
                 _global_mtx.lock();
